@@ -49,3 +49,8 @@ app.include_router(uploads_router, prefix="/api/uploads", tags=["uploads"])
 app.include_router(internal_transcription_router, prefix="/api/internal", tags=["internal"])
 app.include_router(interview_ws_router, prefix="/ws", tags=["websocket"])
 
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
