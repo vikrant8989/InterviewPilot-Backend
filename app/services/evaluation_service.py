@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -95,3 +96,20 @@ def evaluate_answer(*, persona, question_text: str, answer_text: str) -> Evaluat
         weaknesses=weaknesses or ["Can be improved"],
         improvements=improvements or ["Add more detail"],
     )
+
+
+class LangChainEvaluator:
+    """LangChain-compatible evaluator wrapper"""
+    
+    def rule_based_evaluate(self, *, persona: dict, question_text: str, answer_text: str) -> dict:
+        """Evaluate answer using rule-based logic, returns dict for LangGraph compatibility"""
+        result = evaluate_answer(
+            persona=persona,
+            question_text=question_text,
+            answer_text=answer_text
+        )
+        return result.final_score_json
+
+
+# Singleton instance for LangGraph compatibility
+langchain_evaluator = LangChainEvaluator()

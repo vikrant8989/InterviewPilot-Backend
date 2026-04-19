@@ -260,13 +260,23 @@ class InterviewAgentGraph:
             Return ONLY the question text, no formatting or explanations."""
             
             human_prompt = f"""
-            Company: {company}
+            You are interviewing for {company}.
+
             Role: {target_role}
-            Agent Type: {interviewer_type}
+            Interviewer Type: {interviewer_type}
             Difficulty: {difficulty}
             Question Type: {question_type}
-            
-            Generate the interview question:"""
+
+            Relevant Knowledge:
+            {rag_context}
+
+            Instructions:
+            - Ask a non-generic, role-specific question
+            - Avoid repetition
+            - Make it realistic (like real interview)
+
+            Generate ONLY the question.
+            """
             
             messages = [
                 SystemMessage(content=system_prompt),
@@ -276,6 +286,7 @@ class InterviewAgentGraph:
             try:
                 print(f"DEBUG: About to invoke LLM with system prompt length: {len(system_prompt)}")
                 print(f"DEBUG: About to invoke LLM with human prompt length: {len(human_prompt)}")
+                print(f"DEBUG: RAG context: {rag_context}")
                 response = self.llm.invoke(messages)
                 raw_question_text = response.content.strip()
                 print(f"DEBUG: LLM response received: '{raw_question_text}', length: {len(raw_question_text)}")

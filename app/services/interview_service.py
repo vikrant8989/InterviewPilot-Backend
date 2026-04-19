@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Evaluation, InterviewReport, InterviewSession, ProctorEvent, SessionTurn, TranscriptionChunk
 from app.db.session import SessionLocal
-from app.services.agent_service import dynamic_next_question, get_interviewer_type_for_turn, _get_fallback_question
+from app.services.langgraph_agent_service import interview_graph
 from app.services.persona_service import load_persona
 from app.services.evaluation_service import evaluate_answer
 from app.ws.session_manager import session_manager
@@ -84,7 +84,7 @@ class InterviewService:
                         "question_audio_url": turn.question_audio_url,
                         "follow_up_text": None,
                         "difficulty_next": session.difficulty_current,
-                        "interviewer_type": get_interviewer_type_for_turn(session=session, turn_index=turn.turn_index),
+                        "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn.turn_index),
                     },
                 }
             )
@@ -104,7 +104,7 @@ class InterviewService:
         # Decide next question using dynamic agent with timeout protection.
         try:
             next_payload = await asyncio.wait_for(
-                dynamic_next_question(
+                interview_graph.run_interview_turn(
                     session=session,
                     turn_index=turn_index,
                     user_answer_text=user_answer_text,
@@ -112,24 +112,24 @@ class InterviewService:
                 timeout=45.0  # 45 second timeout
             )
         except asyncio.TimeoutError:
-            # Fallback question if generation times out - use pool
+            # Fallback question if generation times out
             next_payload = {
-                "question_text": _get_fallback_question(session.target_role, session.difficulty_current or "Medium"),
+                "question_text": f"Tell me about your experience with {session.target_role} roles.",
                 "question_type": "behavioral",
                 "question_audio_url": None,
                 "difficulty_next": session.difficulty_current or "Medium",
                 "follow_up_text": None,
-                "interviewer_type": get_interviewer_type_for_turn(session=session, turn_index=turn_index),
+                "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index),
             }
         except Exception:
-            # Fallback on any error - use pool
+            # Fallback on any error
             next_payload = {
-                "question_text": _get_fallback_question(session.target_role, session.difficulty_current or "Medium"),
+                "question_text": f"Tell me about your experience with {session.target_role} roles.",
                 "question_type": "behavioral",
                 "question_audio_url": None,
                 "difficulty_next": session.difficulty_current or "Medium",
                 "follow_up_text": None,
-                "interviewer_type": get_interviewer_type_for_turn(session=session, turn_index=turn_index),
+                "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index),
             }
         return next_payload
 
@@ -299,7 +299,7 @@ class InterviewService:
 
             turn.user_answer_text = answer_text
 
-            answer_agent_type = get_interviewer_type_for_turn(session, turn_index)
+            answer_agent_type = interview_graph.get_interviewer_type_for_turn(session, turn_index)
             persona = load_persona(session.company, answer_agent_type)
             evaluation_obj = None
             try:
@@ -361,7 +361,7 @@ class InterviewService:
                 # Generate next question (adaptive) with timeout protection.
                 try:
                     next_payload = await asyncio.wait_for(
-                        dynamic_next_question(
+                        interview_graph.run_interview_turn(
                             session=session,
                             turn_index=turn_index + 1,
                             user_answer_text=answer_text,
@@ -370,24 +370,24 @@ class InterviewService:
                         timeout=45.0  # 45 second timeout for question generation
                     )
                 except asyncio.TimeoutError:
-                    # Fallback question if generation times out - use pool
+                    # Fallback question if generation times out
                     next_payload = {
-                        "question_text": _get_fallback_question(session.target_role, session.difficulty_current or "Medium"),
+                        "question_text": f"Tell me about your experience with {session.target_role} roles.",
                         "question_type": "behavioral",
                         "question_audio_url": None,
                         "difficulty_next": session.difficulty_current or "Medium",
                         "follow_up_text": None,
-                        "interviewer_type": get_interviewer_type_for_turn(session, turn_index + 1),
+                        "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index + 1),
                     }
                 except Exception:
-                    # Fallback on any error - use pool
+                    # Fallback on any error
                     next_payload = {
-                        "question_text": _get_fallback_question(session.target_role, session.difficulty_current or "Medium"),
+                        "question_text": f"Tell me about your experience with {session.target_role} roles.",
                         "question_type": "behavioral",
                         "question_audio_url": None,
                         "difficulty_next": session.difficulty_current or "Medium",
                         "follow_up_text": None,
-                        "interviewer_type": get_interviewer_type_for_turn(session, turn_index + 1),
+                        "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index + 1),
                     }
 
                 difficulty_next = next_payload.get("difficulty_next")

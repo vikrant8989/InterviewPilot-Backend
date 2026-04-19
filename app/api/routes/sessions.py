@@ -3,15 +3,15 @@ import asyncio
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import extract_bearer_token, verify_jwt
 from app.db.session import get_db
-from app.db.models import InterviewSession, SessionTurn, User
+from app.db.models import InterviewSession, SessionTurn, User, Evaluation, TranscriptionChunk, ProctorEvent, InterviewReport
 from app.services.interview_service import InterviewService
 from app.services.tts_service import generate_question_tts_audio_url
-from app.services.agent_service import _get_fallback_question
+from app.services.langgraph_agent_service import interview_graph
 
 router = APIRouter()
 service = InterviewService()
@@ -102,9 +102,9 @@ async def start_session(
             timeout=45.0  # 45 second timeout
         )
     except asyncio.TimeoutError:
-        # Fallback question if generation times out - use pool
+        # Fallback question if generation times out
         first = {
-            "question_text": _get_fallback_question(session.target_role, session.difficulty_current or "Medium"),
+            "question_text": f"Tell me about your experience with {session.target_role} roles.",
             "question_type": "behavioral",
             "question_audio_url": None,
             "difficulty_next": session.difficulty_current or "Medium",
@@ -112,9 +112,9 @@ async def start_session(
             "interviewer_type": "HR",
         }
     except Exception:
-        # Fallback on any error - use pool
+        # Fallback on any error
         first = {
-            "question_text": _get_fallback_question(session.target_role, session.difficulty_current or "Medium"),
+            "question_text": f"Tell me about your experience with {session.target_role} roles.",
             "question_type": "behavioral",
             "question_audio_url": None,
             "difficulty_next": session.difficulty_current or "Medium",
@@ -216,4 +216,55 @@ async def get_session_turns(
         })
 
     return {"sessionId": sessionId, "turns": turn_data, "maxTurns": session.max_turns, "status": session.status}
+
+
+@router.delete("/{sessionId}")
+async def delete_session(
+    sessionId: str,
+    db: AsyncSession = Depends(get_db),
+    authorization: str | None = Header(default=None),
+):
+    token = extract_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization token")
+    auth = verify_jwt(token)
+    user_id = auth["user_id"]
+
+    session = (
+        await db.execute(
+            select(InterviewSession).where(InterviewSession.id == sessionId, InterviewSession.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Get all session turn IDs for this session
+    turns_result = await db.execute(
+        select(SessionTurn.id).where(SessionTurn.session_id == sessionId)
+    )
+    turn_ids = [row[0] for row in turns_result.all()]
+
+    # Delete in correct order to handle foreign key constraints:
+    # 1. Evaluations (references session_turns)
+    if turn_ids:
+        await db.execute(delete(Evaluation).where(Evaluation.session_turn_id.in_(turn_ids)))
+    
+    # 2. TranscriptionChunks (references session_turns)
+    if turn_ids:
+        await db.execute(delete(TranscriptionChunk).where(TranscriptionChunk.session_turn_id.in_(turn_ids)))
+    
+    # 3. SessionTurns (references interview_sessions)
+    await db.execute(delete(SessionTurn).where(SessionTurn.session_id == sessionId))
+    
+    # 4. ProctorEvents (references interview_sessions)
+    await db.execute(delete(ProctorEvent).where(ProctorEvent.session_id == sessionId))
+    
+    # 5. InterviewReports (references interview_sessions)
+    await db.execute(delete(InterviewReport).where(InterviewReport.session_id == sessionId))
+    
+    # 6. Finally delete the session
+    await db.execute(delete(InterviewSession).where(InterviewSession.id == sessionId))
+    
+    await db.commit()
+    return {"message": "Session deleted successfully"}
 
