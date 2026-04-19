@@ -242,3 +242,9 @@ LangGraph Flow
      ┌──────────────────────────┐
      │           END            │
      └──────────────────────────┘
+
+
+## Update RAG Data
+```bash
+python -m app.scripts.load_rag_data
+```
