@@ -30,6 +30,11 @@ def mime_to_extension(mime_type: str) -> str:
     return ext or ".webm"
 
 
+def build_audio_object_key(*, session_id: str, turn_index: int, chunk_index: int, ext: str) -> str:
+    # Keep keys compact and deterministic for idempotency.
+    return f"audio/sessions/{session_id}/turns/{turn_index}/chunks/{chunk_index}{ext}"
+
+
 def presign_put_url(*, object_key: str, content_type: str, expires_seconds: int = 3600) -> str:
     client = make_r2_client()
     return client.generate_presigned_url(

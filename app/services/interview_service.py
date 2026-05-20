@@ -9,18 +9,20 @@ from fastapi import WebSocket
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Evaluation, InterviewReport, InterviewSession, ProctorEvent, SessionTurn
+from app.db.models import Evaluation, InterviewReport, InterviewSession, ProctorEvent, SessionTurn, TranscriptionChunk
 from app.db.session import SessionLocal
 from app.services.langgraph_agent_service import interview_graph
 from app.services.persona_service import load_persona
 from app.services.evaluation_service import evaluate_answer
-from app.services.tts_service import generate_question_tts_audio_url
 from app.ws.session_manager import session_manager
+from app.core.queue import make_transcription_queue
+from app.workers.transcription_worker import transcription_job_runner
+from app.services.tts_service import generate_question_tts_audio_url
 
 
 @dataclass
 class ClientCapabilities:
-    mode: str | None = None  # text/video
+    mode: str | None = None  # text/voice/video
 
 
 class InterviewService:
@@ -111,30 +113,20 @@ class InterviewService:
             )
         except asyncio.TimeoutError:
             # Fallback question if generation times out
-            fallback_text = f"Tell me about your experience with {session.target_role} roles."
             next_payload = {
-                "question_text": fallback_text,
+                "question_text": f"Tell me about your experience with {session.target_role} roles.",
                 "question_type": "behavioral",
-                "question_audio_url": await generate_question_tts_audio_url(
-                    session_id=session.id,
-                    turn_index=turn_index,
-                    text=fallback_text,
-                ),
+                "question_audio_url": None,
                 "difficulty_next": session.difficulty_current or "Medium",
                 "follow_up_text": None,
                 "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index),
             }
         except Exception:
             # Fallback on any error
-            fallback_text = f"Tell me about your experience with {session.target_role} roles."
             next_payload = {
-                "question_text": fallback_text,
+                "question_text": f"Tell me about your experience with {session.target_role} roles.",
                 "question_type": "behavioral",
-                "question_audio_url": await generate_question_tts_audio_url(
-                    session_id=session.id,
-                    turn_index=turn_index,
-                    text=fallback_text,
-                ),
+                "question_audio_url": None,
                 "difficulty_next": session.difficulty_current or "Medium",
                 "follow_up_text": None,
                 "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index),
@@ -282,6 +274,7 @@ class InterviewService:
         print(f"[InterviewService] advance_after_answer called for session {session_id}, turn {turn_index}")
         evaluation_obj = None
         next_payload: dict | None = None
+        next_question_audio_url: str | None = None
         should_end = False
         async with SessionLocal() as db:
             session: InterviewSession | None = (
@@ -376,42 +369,22 @@ class InterviewService:
                         ),
                         timeout=45.0  # 45 second timeout for question generation
                     )
-                    # Generate TTS audio for the question
-                    if next_payload.get("question_text"):
-                        print(f"[InterviewService] Generating TTS for question: {next_payload['question_text'][:50]}...")
-                        audio_url = await generate_question_tts_audio_url(
-                            session_id=session.id,
-                            turn_index=turn_index + 1,
-                            text=next_payload["question_text"],
-                        )
-                        print(f"[InterviewService] TTS audio URL result: {audio_url[:100] if audio_url else 'None'}...")
-                        next_payload["question_audio_url"] = audio_url
                 except asyncio.TimeoutError:
                     # Fallback question if generation times out
-                    fallback_text = f"Tell me about your experience with {session.target_role} roles."
                     next_payload = {
-                        "question_text": fallback_text,
+                        "question_text": f"Tell me about your experience with {session.target_role} roles.",
                         "question_type": "behavioral",
-                        "question_audio_url": await generate_question_tts_audio_url(
-                            session_id=session.id,
-                            turn_index=turn_index + 1,
-                            text=fallback_text,
-                        ),
+                        "question_audio_url": None,
                         "difficulty_next": session.difficulty_current or "Medium",
                         "follow_up_text": None,
                         "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index + 1),
                     }
                 except Exception:
                     # Fallback on any error
-                    fallback_text = f"Tell me about your experience with {session.target_role} roles."
                     next_payload = {
-                        "question_text": fallback_text,
+                        "question_text": f"Tell me about your experience with {session.target_role} roles.",
                         "question_type": "behavioral",
-                        "question_audio_url": await generate_question_tts_audio_url(
-                            session_id=session.id,
-                            turn_index=turn_index + 1,
-                            text=fallback_text,
-                        ),
+                        "question_audio_url": None,
                         "difficulty_next": session.difficulty_current or "Medium",
                         "follow_up_text": None,
                         "interviewer_type": interview_graph.get_interviewer_type_for_turn(session, turn_index + 1),
@@ -422,18 +395,31 @@ class InterviewService:
                     session.difficulty_current = difficulty_next
                     await db.commit()
 
-                question_audio_url = next_payload.get("question_audio_url")
                 next_turn = SessionTurn(
                     session_id=session.id,
                     turn_index=turn_index + 1,
                     question_type=next_payload.get("question_type"),
                     question_text=next_payload.get("question_text") or "Default question: Tell me about your experience.",
-                    question_audio_url=question_audio_url,
+                    question_audio_url=next_question_audio_url,
                     evaluation_status="pending",
                     created_at=datetime.utcnow(),
                 )
                 db.add(next_turn)
                 await db.commit()
+
+                # Generate TTS audio (only for voice/video sessions).
+                if session.interview_mode in ("voice", "video"):
+                    try:
+                        next_question_audio_url = await generate_question_tts_audio_url(
+                            session_id=session.id,
+                            turn_index=turn_index + 1,
+                            text=next_payload["question_text"],
+                        )
+                        # Update DB row with generated audio URL.
+                        next_turn.question_audio_url = next_question_audio_url
+                        await db.commit()
+                    except Exception:
+                        next_question_audio_url = None
 
         # Notify client(s) via WS manager.
         print(f"[WS] Sending evaluation for turn {turn_index}, score: {evaluation_obj.final_score_json.get('overall')}")
@@ -474,7 +460,7 @@ class InterviewService:
                         "turnIndex": turn_index + 1,
                         "question_text": next_payload["question_text"],
                         "question_type": next_payload.get("question_type"),
-                        "question_audio_url": next_payload.get("question_audio_url"),
+                        "question_audio_url": next_question_audio_url,
                         "follow_up_text": next_payload.get("follow_up_text"),
                         "difficulty_next": next_payload.get("difficulty_next"),
                         "interviewer_type": next_payload.get("interviewer_type"),
@@ -557,6 +543,71 @@ class InterviewService:
             {
                 "event": "proctor_ack",
                 "payload": {"sessionId": session_id, "userId": user_id, "eventType": event_type},
+            }
+        )
+
+    async def on_audio_chunk_uploaded(
+        self,
+        *,
+        websocket: WebSocket,
+        session_id: str,
+        user_id: str,
+        payload: dict[str, Any],
+    ):
+        """
+        payload:
+        - turnIndex: int
+        - chunkIndex: int
+        - r2AudioKey: str
+        - mimeType: str
+        - isFinalChunk: boolean
+        """
+        turn_index = int(payload.get("turnIndex"))
+        chunk_index = int(payload.get("chunkIndex"))
+        r2_audio_key = payload.get("r2AudioKey")
+        mime_type = payload.get("mimeType")
+        is_final = bool(payload.get("isFinalChunk"))
+
+        if not r2_audio_key:
+            await websocket.send_json({"event": "error", "payload": {"code": "MISSING_R2_KEY", "message": "r2AudioKey missing"}})
+            return
+
+        async with SessionLocal() as db:
+            session: InterviewSession | None = (
+                await db.execute(select(InterviewSession).where(InterviewSession.id == session_id, InterviewSession.user_id == user_id))
+            ).scalar_one_or_none()
+            if not session:
+                await websocket.send_json({"event": "error", "payload": {"code": "SESSION_NOT_FOUND", "message": "Invalid session"}})
+                return
+
+            turn: SessionTurn | None = (
+                await db.execute(select(SessionTurn).where(SessionTurn.session_id == session_id, SessionTurn.turn_index == turn_index))
+            ).scalar_one_or_none()
+            if not turn:
+                await websocket.send_json({"event": "error", "payload": {"code": "TURN_NOT_FOUND", "message": f"Turn {turn_index} not found"}})
+                return
+
+            # Persist chunk metadata so worker can update transcripts later.
+            chunk_row = TranscriptionChunk(
+                session_turn_id=turn.id,
+                chunk_index=chunk_index,
+                r2_audio_key=r2_audio_key,
+                mime_type=mime_type,
+                is_final_chunk=is_final,
+                created_at=datetime.utcnow(),
+            )
+            db.add(chunk_row)
+            await db.commit()
+            await db.refresh(chunk_row)
+
+        queue = make_transcription_queue()
+        # Enqueue worker job. It will update DB and call internal finalize endpoint for last chunk.
+        queue.enqueue(transcription_job_runner, chunk_row.id, session_id, turn_index)
+
+        await websocket.send_json(
+            {
+                "event": "chunk_upload_ack",
+                "payload": {"turnIndex": turn_index, "chunkIndex": chunk_index, "isFinalChunk": is_final},
             }
         )
 

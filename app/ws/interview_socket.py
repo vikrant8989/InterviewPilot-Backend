@@ -35,8 +35,11 @@ async def interview_socket(websocket: WebSocket):
             if event == "join_session":
                 await service.on_join(websocket=websocket, session_id=session_id, user_id=user_id, payload=payload)
 
-            if event == "text_answer_submitted":
+            elif event == "text_answer_submitted":
                 await service.on_text_answer(websocket=websocket, session_id=session_id, user_id=user_id, payload=payload)
+
+            elif event == "answer_chunk_uploaded":
+                await service.on_audio_chunk_uploaded(websocket=websocket, session_id=session_id, user_id=user_id, payload=payload)
 
             elif event == "client_proctor_event":
                 await service.on_proctor_event(websocket=websocket, session_id=session_id, user_id=user_id, payload=payload)

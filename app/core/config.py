@@ -33,11 +33,18 @@ class Settings(BaseSettings):
     # Dev convenience (do NOT enable in production)
     auto_create_tables: bool = False
 
-    # OpenAI
+    # Transcription
+    whisper_provider: str = "openai"  # "openai" or "local"
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
     openai_base_url: str | None = os.getenv("OPENAI_BASE_URL")
+    openai_transcription_model: str = "whisper-1"
     openai_chat_model: str = os.getenv("OPENAI_CHAT_MODEL", "openai/gpt-oss-120b")
     openai_temperature: float = float(os.getenv("OPENAI_TEMPERATURE", 0.7))
+
+    # TTS
+    tts_provider: str = "gtts"  # "gtts" for free-first
+    tts_lang: str = "en"
+    tts_audio_expires_seconds: int = 3600
 
     # Google OAuth
     google_client_id: str | None = None

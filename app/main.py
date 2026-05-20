@@ -8,6 +8,8 @@ from app.api.routes.sessions import router as sessions_router
 from app.api.routes.history import router as history_router
 from app.core.config import settings
 from app.ws.interview_socket import router as interview_ws_router
+from app.api.routes.uploads import router as uploads_router
+from app.api.routes.internal_transcription import router as internal_transcription_router
 from app.db.session import engine
 from app.db.models import Base
 
@@ -43,6 +45,8 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(sessions_router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(history_router, prefix="/api/history", tags=["history"])
+app.include_router(uploads_router, prefix="/api/uploads", tags=["uploads"])
+app.include_router(internal_transcription_router, prefix="/api/internal", tags=["internal"])
 app.include_router(interview_ws_router, prefix="/ws", tags=["websocket"])
 
 

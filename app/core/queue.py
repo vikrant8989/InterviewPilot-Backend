@@ -12,3 +12,8 @@ def make_redis() -> Redis | None:
         return None
     return Redis.from_url(settings.redis_url)
 
+
+def make_transcription_queue():
+    # Return None for now - will fix later
+    return None
+
