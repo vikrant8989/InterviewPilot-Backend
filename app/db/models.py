@@ -50,7 +50,7 @@ class InterviewSession(Base):
     difficulty_start: Mapped[str] = mapped_column(String(20), nullable=False)
     difficulty_current: Mapped[str] = mapped_column(String(20), nullable=False)
 
-    interview_mode: Mapped[str] = mapped_column(String(20), nullable=False)  # text/voice/video
+    interview_mode: Mapped[str] = mapped_column(String(20), nullable=False)  # text/video
     status: Mapped[str] = mapped_column(String(30), nullable=False)  # CREATED/IN_PROGRESS/...
 
     max_turns: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
@@ -75,7 +75,7 @@ class SessionTurn(Base):
 
     question_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     question_text: Mapped[str] = mapped_column(Text(), nullable=False)
-    question_audio_url: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    question_audio_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     user_answer_text: Mapped[str | None] = mapped_column(Text(), nullable=True)
     user_answer_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -97,23 +97,6 @@ class Evaluation(Base):
     strengths: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     weaknesses: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     improvements: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
-
-    created_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class TranscriptionChunk(Base):
-    __tablename__ = "transcription_chunks"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid4_str)
-    session_turn_id: Mapped[str] = mapped_column(ForeignKey("session_turns.id"), nullable=False)
-    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    r2_audio_key: Mapped[str] = mapped_column(Text(), nullable=False)
-    mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
-
-    is_final_chunk: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    transcript_text: Mapped[str | None] = mapped_column(Text(), nullable=True)
-    language: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped["DateTime"] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -243,6 +243,8 @@ class InterviewAgentGraph:
         rag_context = state.get("rag_context", "")
         memory_summary = state.get("memory_summary", "")
         interviewer_type = state.get("interviewer_type", "TECH")
+        user_answer = state.get("user_answer", "")
+        previous_question = state.get("previous_question", "")
         
         if not persona:
             # Fallback if persona is not available
@@ -259,24 +261,50 @@ class InterviewAgentGraph:
             Keep it concise and focused on the role/company.
             Return ONLY the question text, no formatting or explanations."""
             
-            human_prompt = f"""
-            You are interviewing for {company}.
+            # Build prompt with or without previous answer context
+            if user_answer and previous_question:
+                human_prompt = f"""
+                You are interviewing for {company}.
 
-            Role: {target_role}
-            Interviewer Type: {interviewer_type}
-            Difficulty: {difficulty}
-            Question Type: {question_type}
+                Role: {target_role}
+                Interviewer Type: {interviewer_type}
+                Difficulty: {difficulty}
+                Question Type: {question_type}
 
-            Relevant Knowledge:
-            {rag_context}
+                Previous Question: {previous_question}
+                Candidate's Answer: {user_answer}
 
-            Instructions:
-            - Ask a non-generic, role-specific question
-            - Avoid repetition
-            - Make it realistic (like real interview)
+                Relevant Knowledge:
+                {rag_context}
 
-            Generate ONLY the question.
-            """
+                Instructions:
+                - Ask a follow-up question based on the candidate's answer
+                - Probe deeper into their explanation
+                - Ask for specific examples or details
+                - Make it realistic (like real interview)
+                - Avoid repetition
+
+                Generate ONLY the follow-up question.
+                """
+            else:
+                human_prompt = f"""
+                You are interviewing for {company}.
+
+                Role: {target_role}
+                Interviewer Type: {interviewer_type}
+                Difficulty: {difficulty}
+                Question Type: {question_type}
+
+                Relevant Knowledge:
+                {rag_context}
+
+                Instructions:
+                - Ask a non-generic, role-specific question
+                - Avoid repetition
+                - Make it realistic (like real interview)
+
+                Generate ONLY the question.
+                """
             
             messages = [
                 SystemMessage(content=system_prompt),
@@ -417,7 +445,6 @@ class InterviewAgentGraph:
             return {
                 "question_text": result.get("question_text") or f"Tell me about your experience as a {getattr(session, 'target_role', 'candidate')}.",
                 "question_type": result.get("question_type") or "conceptual",
-                "question_audio_url": None,  # TODO: TTS integration
                 "difficulty_next": result.get("difficulty_next") or "Medium",
                 "follow_up_text": result.get("follow_up_text"),
                 "interviewer_type": result.get("interviewer_type") or "TECH",

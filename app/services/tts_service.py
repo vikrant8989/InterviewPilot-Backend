@@ -1,41 +1,57 @@
-from __future__ import annotations
+import os
+import uuid
+import base64
+from datetime import datetime, timedelta
+from typing import Optional
 
-import io
-import tempfile
-
+from gtts import gTTS
+from app.core.r2_storage import upload_bytes, mime_to_extension
 from app.core.config import settings
-from app.core.r2_storage import presign_get_url, upload_bytes
 
 
-def _tts_object_key(*, session_id: str, turn_index: int) -> str:
-    return f"audio/tts/sessions/{session_id}/turns/{turn_index}.mp3"
-
-
-async def generate_question_tts_audio_url(*, session_id: str, turn_index: int, text: str) -> str | None:
+async def generate_question_tts_audio_url(
+    *,
+    session_id: str,
+    turn_index: int,
+    text: str,
+) -> Optional[str]:
     """
-    Free-first TTS implementation.
-
-    - Generates MP3 via gTTS
-    - Uploads MP3 bytes to Cloudflare R2
-    - Returns a presigned GET URL for the frontend player
-
-    Note: gTTS uses external network; keep question length reasonable.
+    Generate TTS audio for a question.
+    Returns a data URL for immediate playback (no R2 upload required).
     """
-    if not text or not text.strip():
+    print(f"[TTS] Starting audio generation for session {session_id}, turn {turn_index}")
+    print(f"[TTS] Text to speak: {text[:100]}...")
+    
+    try:
+        # Generate audio using gTTS
+        print(f"[TTS] Creating gTTS object...")
+        tts = gTTS(text=text, lang='en', slow=False)
+        
+        # Save to temporary file
+        temp_filename = f"tts_{uuid.uuid4()}.mp3"
+        print(f"[TTS] Saving to temp file: {temp_filename}")
+        tts.save(temp_filename)
+        
+        # Read the file
+        print(f"[TTS] Reading temp file...")
+        with open(temp_filename, 'rb') as f:
+            audio_bytes = f.read()
+        
+        print(f"[TTS] Audio bytes length: {len(audio_bytes)}")
+        
+        # Clean up temp file
+        os.remove(temp_filename)
+        print(f"[TTS] Temp file removed")
+        
+        # Convert to base64 data URL for immediate playback
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        data_url = f"data:audio/mpeg;base64,{audio_base64}"
+        
+        print(f"[TTS] Data URL generated, length: {len(data_url)}")
+        return data_url
+        
+    except Exception as e:
+        print(f"[TTS] Error generating TTS audio: {e}")
+        import traceback
+        traceback.print_exc()
         return None
-    if settings.tts_provider.lower() != "gtts":
-        return None
-
-    # gTTS writes to a file; we read file bytes and upload to R2.
-    from gtts import gTTS  # local import so backend can start without TTS deps failing at import time
-
-    tts = gTTS(text=text, lang=settings.tts_lang)
-    with tempfile.NamedTemporaryFile(suffix=".mp3") as f:
-        tts.write_to_fp(f)
-        f.seek(0)
-        data = f.read()
-
-    object_key = _tts_object_key(session_id=session_id, turn_index=turn_index)
-    upload_bytes(object_key=object_key, content_type="audio/mpeg", data=data)
-    return presign_get_url(object_key=object_key, expires_seconds=settings.tts_audio_expires_seconds)
-
