@@ -174,6 +174,7 @@ class InterviewAgentGraph:
                 question_type=question_type,
                 transcript=user_answer or "",
             )
+            print(f"DEBUG: RAG retrieved context: {rag}")
             state["rag_context"] = rag.get("injected_context_text", "")
         except Exception as e:
             print(f"RAG context retrieval failed: {e}")
