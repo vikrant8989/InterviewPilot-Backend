@@ -1,0 +1,28 @@
+# Ignore virtual envs and local env files
+venv/
+.venv/
+.env
+
+# Ignore local databases, caches and large data directories
+chroma_db/
+data/
+data/chroma/
+*.sqlite3
+.cache/
+.huggingface/
+models/
+model_weights/
+uploads/
+
+# Python build/artifacts
+__pycache__/
+*.pyc
+
+# Git, node and misc
+.git/
+node_modules/
+dist/
+tests/
+
+# Vercel build cache
+.vercel/
